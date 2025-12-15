@@ -332,6 +332,16 @@ def main():
             st.rerun()
             return
 
+        # --- NEW: CONNECTION LOST ALERT (ADDED FEATURE) ---
+        # Calculate time since last data point
+        last_time = df.index[-1]
+        time_diff = (datetime.now() - last_time).total_seconds()
+
+        if time_diff > 2:  # If no data for >10 seconds
+            st.error(
+                f"🚨 BRIDGE DISCONNECTED: Last data received {int(time_diff)} seconds ago. Please restart 'index.html'.")
+        # --------------------------------------------------
+
     elif data_mode == "📂 Upload CSV":
         # UPLOAD PATH
         if uploaded_file is None:
