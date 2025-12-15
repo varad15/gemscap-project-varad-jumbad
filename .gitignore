@@ -1,0 +1,17 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+
+# Virtual Environment
+venv/
+env/
+.env
+
+# Data and Database (Don't push the local DB)
+data/
+*.db
+*.sqlite3
+
+# IDE settings (Optional but recommended)
+.vscode/
+.idea/

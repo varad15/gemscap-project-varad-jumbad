@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AlphaTrawler — Bridge Mode</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+  body { margin: 0; padding: 20px; background: #050505; color: #e0e0e0; }
+  .card { background: #111; border: 1px solid #333; border-radius: 12px; padding: 20px; max-width: 800px; margin: 0 auto; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
+  h2 { margin-top: 0; color: #fff; border-bottom: 1px solid #333; padding-bottom: 10px; }
+  label { display: block; margin-bottom: 5px; font-size: 14px; color: #888; }
+  input { width: 100%; padding: 12px; border-radius: 6px; border: 1px solid #444; background: #000; color: #fff; box-sizing: border-box; font-family: monospace; }
+
+  .controls { display: flex; gap: 10px; margin-top: 20px; justify-content: flex-end; }
+  button { padding: 12px 24px; border-radius: 6px; border: none; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+  button.primary { background: #00F0FF; color: #000; box-shadow: 0 0 10px rgba(0, 240, 255, 0.2); }
+  button.primary:hover { background: #00D0DF; transform: translateY(-1px); }
+  button.secondary { background: #222; color: #ccc; border: 1px solid #444; }
+  button.secondary:hover { background: #333; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .status-box { background: #1a1a1a; padding: 15px; border-radius: 8px; margin: 20px 0; display: flex; justify-content: space-between; align-items: center; border-left: 4px solid #444; }
+  .status-text { font-weight: bold; font-family: monospace; }
+  .status-idle { border-color: #666; color: #888; }
+  .status-connected { border-color: #00FF00; color: #00FF00; }
+  .status-error { border-color: #FF0000; color: #FF0000; }
+
+  .log { background: #000; border: 1px solid #222; border-radius: 8px; padding: 15px; height: 300px; overflow-y: auto; font-family: 'Consolas', monospace; font-size: 12px; line-height: 1.5; color: #aaa; }
+  .log-entry { border-bottom: 1px solid #111; padding: 2px 0; }
+  .log-entry span { color: #666; margin-right: 10px; }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <h2>🔗 Binance WebSocket Bridge</h2>
+
+  <div style="margin-bottom: 20px;">
+    <p style="font-size: 14px; color: #888;">
+      This tool connects to the <strong>Binance Futures Stream</strong> and forwards data to your local Python application (AlphaTrawler).
+      Keep this tab open while running the dashboard.
+    </p>
+  </div>
+
+  <div>
+    <label>Target Symbols (Comma separated, lowercase)</label>
+    <input id="symbols" value="btcusdt,ethusdt" placeholder="e.g. btcusdt,ethusdt">
+  </div>
+
+  <div id="status-container" class="status-box status-idle">
+    <div>
+      <div style="font-size: 12px; color: #888; text-transform: uppercase;">System Status</div>
+      <div id="status-text" class="status-text">DISCONNECTED</div>
+    </div>
+    <div id="stats" style="text-align: right; font-family: monospace; font-size: 14px;">Events Forwarded: 0</div>
+  </div>
+
+  <div class="log" id="log"></div>
+
+  <div class="controls">
+    <button id="clear" class="secondary">Clear Log</button>
+    <button id="stop" class="secondary" disabled>Stop Bridge</button>
+    <button id="start" class="primary">START BRIDGE</button>
+  </div>
+</div>
+
+<script>
+(()=>{
+  const $ = id => document.getElementById(id);
+  let binanceSockets = [];
+  let bridgeSocket = null;
+  let eventCount = 0;
+  let isRunning = false;
+
+  function log(msg) {
+    const ts = new Date().toLocaleTimeString();
+    const div = document.createElement('div');
+    div.className = 'log-entry';
+    div.innerHTML = `<span>[${ts}]</span> ${msg}`;
+    $('log').appendChild(div);
+    $('log').scrollTop = $('log').scrollHeight;
+  }
+
+  function setStatus(state, msg) {
+    const box = $('status-container');
+    const text = $('status-text');
+    box.className = `status-box status-${state}`;
+    text.textContent = msg;
+  }
+
+  // --- 1. Connect to Local Python Server ---
+  function connectToPython() {
+    log("Attempting to connect to Python backend (ws://localhost:8765)...");
+
+    bridgeSocket = new WebSocket("ws://localhost:8765");
+
+    bridgeSocket.onopen = () => {
+      log("✅ Connected to Python Backend successfully.");
+      startBinanceStreams(); // Only start Binance if Python is listening
+    };
+
+    bridgeSocket.onclose = (ev) => {
+      log("❌ Disconnected from Python. Is 'streamlit run app.py' running?");
+      stopBridge();
+      setStatus('error', "PYTHON DISCONNECTED");
+    };
+
+    bridgeSocket.onerror = (err) => {
+      log("⚠️ Bridge Connection Error.");
+      setStatus('error', "CONNECTION FAILED");
+    };
+  }
+
+  // --- 2. Connect to Binance Futures ---
+  function startBinanceStreams() {
+    const symbols = $('symbols').value.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+
+    if (symbols.length === 0) {
+      log("Error: No symbols provided.");
+      return;
+    }
+
+    log(`Connecting to Binance Futures for: ${symbols.join(', ')}...`);
+
+    binanceSockets = symbols.map(sym => {
+      const url = `wss://fstream.binance.com/ws/${sym}@trade`;
+      const ws = new WebSocket(url);
+
+      ws.onopen = () => {
+        log(`🟢 Binance Stream Open: ${sym}`);
+        setStatus('connected', "BRIDGE ACTIVE - FORWARDING DATA");
+      };
+
+      ws.onmessage = (ev) => {
+        try {
+          const data = JSON.parse(ev.data);
+          if (data.e === 'trade') {
+            // Forward to Python
+            if (bridgeSocket && bridgeSocket.readyState === WebSocket.OPEN) {
+              bridgeSocket.send(JSON.stringify(data));
+              eventCount++;
+              $('stats').textContent = `Events Forwarded: ${eventCount}`;
+            }
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      };
+
+      ws.onerror = () => log(`⚠️ Binance Error: ${sym}`);
+      ws.onclose = () => log(`Binance Stream Closed: ${sym}`);
+
+      return ws;
+    });
+
+    $('start').disabled = true;
+    $('stop').disabled = false;
+    isRunning = true;
+  }
+
+  // --- 3. Stop Logic ---
+  function stopBridge() {
+    if (!isRunning) return;
+
+    log("Stopping all connections...");
+    binanceSockets.forEach(ws => ws.close());
+    binanceSockets = [];
+
+    if (bridgeSocket) {
+      bridgeSocket.close();
+      bridgeSocket = null;
+    }
+
+    isRunning = false;
+    $('start').disabled = false;
+    $('stop').disabled = true;
+    setStatus('idle', "STOPPED");
+  }
+
+  // --- Event Listeners ---
+  $('start').onclick = () => {
+    if (isRunning) return;
+    setStatus('idle', "INITIALIZING...");
+    connectToPython();
+  };
+
+  $('stop').onclick = stopBridge;
+
+  $('clear').onclick = () => {
+    $('log').innerHTML = '';
+    eventCount = 0;
+    $('stats').textContent = `Events Forwarded: 0`;
+  };
+
+})();
+</script>
+</body>
+</html>
