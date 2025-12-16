@@ -1,6 +1,16 @@
 # ⚡ AlphaTrawler: Real-Time Quantitative Trading Dashboard
 
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue) ![Streamlit](https://img.shields.io/badge/Frontend-Streamlit-red) ![Status](https://img.shields.io/badge/Status-Operational-brightgreen)
+## Home Page
+![Working image](main_page.png)
+
+## Bridge
+![index](bridge.png)
+
+## Features
+![quantlab](quantlab.png)
+![data](data.png)
+![backtest](backtest.png)
 
 ## Overview
 
@@ -43,7 +53,7 @@ Binance API → HTML/JS Client → Python Server → SQLite → Analytics Engine
 
 ```bash
 # Clone and install
-git clone https://github.com/yourusername/alphatrawler.git
+git clone https://github.com/varad15/alphatrawler.git
 cd alphatrawler
 pip install -r requirements.txt
 
@@ -186,6 +196,3 @@ Developed for the Quantitative Developer Technical Evaluation.
 
 ---
 
-
-
-finally is this okay??
