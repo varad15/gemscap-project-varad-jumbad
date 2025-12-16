@@ -464,7 +464,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-
 # ==========================================
 # 3. ENHANCED ANALYTICS ENGINE
 # ==========================================
@@ -475,32 +474,34 @@ class MetricsEngine:
     def safe_divide(a, b, default=0.0):
         try:
             return a / b if b != 0 and not np.isnan(b) and not np.isinf(b) else default
-        except:
+        except Exception:
             return default
 
     @staticmethod
     def calculate_drawdown(equity_curve):
-        if equity_curve.empty: return 0.0
+        if equity_curve.empty:
+            return 0.0
         try:
             base = abs(equity_curve.min()) + 1000
             curve = equity_curve + base
             roll_max = curve.cummax()
             dd = (curve - roll_max) / roll_max
             return dd.min()
-        except:
+        except Exception:
             return 0.0
 
     @staticmethod
     def generate_report(backtest_res):
         defaults = {"max_dd": 0.0, "sortino": 0.0, "calmar": 0.0, "sharpe": 0.0, "total_return": 0.0}
-        if not backtest_res or backtest_res.get('num_trades', 0) == 0: return defaults
+        if not backtest_res or backtest_res.get('num_trades', 0) == 0:
+            return defaults
 
         try:
             equity = backtest_res.get('equity_curve', pd.Series(dtype=float))
             max_dd = MetricsEngine.calculate_drawdown(equity)
             returns = equity.diff().fillna(0)
-            downside = returns[returns < 0].std()
 
+            downside = returns[returns < 0].std()
             sortino = MetricsEngine.safe_divide(returns.mean() * np.sqrt(252 * 1440), downside)
             total_ret = backtest_res.get('total_return', 0.0)
             calmar = MetricsEngine.safe_divide(total_ret, abs(max_dd * 1000))
@@ -512,9 +513,8 @@ class MetricsEngine:
                 "sharpe": backtest_res.get('sharpe_ratio', 0.0),
                 "total_return": total_ret
             }
-        except:
+        except Exception:
             return defaults
-
 
 # ==========================================
 # 4. CYBERPUNK VISUALIZATION ENGINE
@@ -524,10 +524,7 @@ class QuantVisualizer:
     def _apply_theme(fig, height=400):
         """Apply cyberpunk theme to figure. ALWAYS returns a Figure object."""
         if fig is None:
-            print("[DEBUG _apply_theme] Input fig is None, creating new")
             fig = go.Figure()
-
-        print(f"[DEBUG _apply_theme] Input type: {type(fig)}")
 
         try:
             fig.update_layout(
@@ -573,10 +570,9 @@ class QuantVisualizer:
                 )
             )
         except Exception as e:
-            print(f"[DEBUG _apply_theme] Error in update_layout: {e}")
+            logger.warning(f"_apply_theme layout error: {e}")
 
-        print(f"[DEBUG _apply_theme] Returning type: {type(fig)}")
-        # CRITICAL: Explicitly return the figure object
+        # Explicitly return the themed figure
         return fig
 
     @staticmethod
@@ -807,6 +803,8 @@ class QuantVisualizer:
             )
         )
 
+        # Critical fix: ensure the figure is returned
+        return QuantVisualizer._apply_theme(fig, height=400)
 
 # ==========================================
 # 5. MAIN CONTROLLER
@@ -885,7 +883,8 @@ def main():
         else:
             freq = "N/A"
 
-        win = st.number_input("Window Size", 20, 5000, 60, step=10)
+        # Validate positive window sizes
+        win = st.number_input("Window Size", min_value=1, max_value=5000, value=60, step=10)
 
         st.markdown("---")
 
@@ -896,6 +895,12 @@ def main():
         col3, col4 = st.columns(2)
         z_in = col3.number_input("Entry Z", 1.0, 4.0, 2.0, 0.1)
         z_out = col4.number_input("Exit Z", -1.0, 1.0, 0.0, 0.1)
+
+        # --- CUSTOM ALERT RULES ---
+        st.markdown("### 🚨 ALERT RULES")
+        enable_custom_alerts = st.checkbox("Enable custom z-score alerts", value=False)
+        custom_z_upper = st.number_input("Custom Upper Z Alert", 0.5, 6.0, 2.0, 0.1)
+        custom_z_lower = st.number_input("Custom Lower Z Alert", -6.0, -0.5, -2.0, 0.1)
 
         st.markdown("---")
 
@@ -920,7 +925,7 @@ def main():
     # --- MAIN CONTENT AREA ---
     st.title(f"⚡ {target} / {ref}")
     st.markdown(
-        f"<p style='color: #888; font-size: 14px; margin-top: -10px;'>Real-time Statistical Arbitrage Engine</p>",
+        "<p style='color: #888; font-size: 14px; margin-top: -10px;'>Real-time Statistical Arbitrage Engine</p>",
         unsafe_allow_html=True)
 
     # --- DATA LOADING & PROCESSING ---
@@ -990,6 +995,7 @@ def main():
     try:
         # 1. Calculate Hedge Ratio
         if "Kalman" in algo:
+            # Kalman now returns (beta, spread); use both
             beta, spread = eng.calculate_kalman_hedge_ratio(df[target], df[ref])
         else:
             beta, spread = eng.calculate_rolling_ols(df[target], df[ref], window=win)
@@ -1022,16 +1028,36 @@ def main():
             sig_txt = "LONG SPREAD"
             sig_color = "#00ff88"
 
-        # 5. Alert System
-        if data_mode == "🔌 HTML Bridge" and sig_txt != "NEUTRAL":
-            msg = f"{datetime.now().strftime('%H:%M:%S')} | {sig_txt} | Z: {last['z_score']:.2f}"
-            if msg != st.session_state.last_signal:
-                st.session_state.alerts_history.append({
-                    'msg': msg,
-                    'type': 'sell' if 'SHORT' in sig_txt else 'buy',
-                    'time': datetime.now()
-                })
-                st.session_state.last_signal = msg
+        # 5. Alert System (configurable)
+        if data_mode == "🔌 HTML Bridge":
+            alert_triggered = False
+            alert_type = None
+
+            # Hard-coded strategy alerts (existing behavior)
+            if sig_txt != "NEUTRAL":
+                alert_triggered = True
+                alert_type = 'sell' if 'SHORT' in sig_txt else 'buy'
+
+            # Custom rule-based alerts
+            if enable_custom_alerts:
+                if last['z_score'] >= custom_z_upper:
+                    alert_triggered = True
+                    alert_type = 'sell'
+                    sig_txt = f"CUSTOM SHORT ALERT (Z ≥ {custom_z_upper:.2f})"
+                elif last['z_score'] <= custom_z_lower:
+                    alert_triggered = True
+                    alert_type = 'buy'
+                    sig_txt = f"CUSTOM LONG ALERT (Z ≤ {custom_z_lower:.2f})"
+
+            if alert_triggered:
+                msg = f"{datetime.now().strftime('%H:%M:%S')} | {sig_txt} | Z: {last['z_score']:.2f}"
+                if msg != st.session_state.last_signal:
+                    st.session_state.alerts_history.append({
+                        'msg': msg,
+                        'type': alert_type,
+                        'time': datetime.now()
+                    })
+                    st.session_state.last_signal = msg
 
         # 6. Backtest
         bt = run_backtest(data['spread'], data['z_score'], z_in, z_out)
@@ -1192,24 +1218,19 @@ def main():
 
         st.markdown("---")
 
-        # Simple equity plot
+        # Simple equity plot + trade stats
         if bt and isinstance(bt, dict) and 'equity_curve' in bt:
             equity_data = bt['equity_curve']
 
             if equity_data is not None and not (hasattr(equity_data, 'empty') and equity_data.empty):
-                # We have valid equity data
-                print(f"CALLING plot_equity with data type: {type(equity_data)}")
                 equity_fig = QuantVisualizer.plot_equity(equity_data)
-                print(f"AFTER CALL: equity_fig type = {type(equity_fig)}")
-                print(f"AFTER CALL: is None? {equity_fig is None}")
-                print(f"AFTER CALL: is Figure? {isinstance(equity_fig, go.Figure)}")
 
                 if equity_fig is not None and isinstance(equity_fig, go.Figure):
                     st.plotly_chart(equity_fig, use_container_width=True, config={'displayModeBar': False})
                 else:
                     st.error(f"❌ Invalid figure returned: type={type(equity_fig)}")
 
-                # Trade Statistics
+                # Trade Statistics (requires bt to include win_rate, avg_win, avg_loss)
                 trade_col1, trade_col2, trade_col3, trade_col4 = st.columns(4)
                 trade_col1.metric("Total Trades", bt.get('num_trades', 0))
                 trade_col2.metric("Win Rate", f"{bt.get('win_rate', 0) * 100:.1f}%")
@@ -1229,20 +1250,57 @@ def main():
             height=500
         )
 
-        # Download button
+        # Download button for processed data
         csv = data.to_csv().encode('utf-8')
         st.download_button(
-            label="📥 Download CSV",
+            label="📥 Download CSV (Processed)",
             data=csv,
             file_name=f"alphatrawler_{target}_{ref}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
             mime="text/csv"
         )
 
+        # Optional: export analytics outputs if available from analytics engine / backtest
+        if bt and isinstance(bt, dict):
+            analytics_export = {
+                "equity_curve": bt.get("equity_curve"),
+                "trade_log": bt.get("trades"),
+                "sharpe_ratio": bt.get("sharpe_ratio"),
+                "total_return": bt.get("total_return"),
+            }
+            try:
+                # Basic flat export: equity curve and summary stats
+                eq_df = pd.DataFrame({
+                    "timestamp": analytics_export["equity_curve"].index,
+                    "equity": analytics_export["equity_curve"].values
+                }) if analytics_export["equity_curve"] is not None else pd.DataFrame()
+
+                summary_df = pd.DataFrame([{
+                    "sharpe_ratio": analytics_export["sharpe_ratio"],
+                    "total_return": analytics_export["total_return"],
+                    "sortino": metrics["sortino"],
+                    "calmar": metrics["calmar"],
+                    "max_drawdown": metrics["max_dd"]
+                }])
+
+                with pd.ExcelWriter("analytics_outputs.xlsx", engine="xlsxwriter") as writer:
+                    if not eq_df.empty:
+                        eq_df.to_excel(writer, sheet_name="EquityCurve", index=False)
+                    summary_df.to_excel(writer, sheet_name="Summary", index=False)
+
+                with open("analytics_outputs.xlsx", "rb") as f:
+                    st.download_button(
+                        label="📥 Download Analytics Outputs",
+                        data=f,
+                        file_name=f"analytics_outputs_{target}_{ref}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+            except Exception as e:
+                logger.warning(f"Analytics export failed: {e}")
+
     # --- AUTO-REFRESH FOR LIVE MODE ---
     if data_mode == "🔌 HTML Bridge" and connection_status == "online":
         time.sleep(refresh_interval)
         st.rerun()
-
 
 if __name__ == "__main__":
     main()

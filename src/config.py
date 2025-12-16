@@ -12,9 +12,14 @@ DB_PATH = f"sqlite:///{DATA_DIR / DB_NAME}"
 # --- Trading Universe ---
 # These must match the symbols you type into the HTML file
 PAIRS = [
-    {"symbol": "BTCUSDT", "role": "independent"},
-    {"symbol": "ETHUSDT", "role": "dependent"},
+    {"symbol": "BTCUSDT", "role": "independent", "min_notional": 50, "min_volume": 10_000},
+    {"symbol": "ETHUSDT", "role": "dependent", "min_notional": 50, "min_volume": 10_000},
 ]
+
+# --- Liquidity Filters (for extensions / future use) ---
+# Thresholds that can be applied in processing/analytics to drop illiquid symbols
+MIN_NOTIONAL_USD = 50          # Minimum notional per trade
+MIN_24H_VOLUME_USD = 100_000   # Minimum 24h volume
 
 # --- Analytics Defaults ---
 REFRESH_RATE_MS = 1000      # Default Frontend refresh rate

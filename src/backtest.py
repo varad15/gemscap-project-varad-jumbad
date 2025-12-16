@@ -1,89 +1,142 @@
-# src/backtest.py
 import pandas as pd
 import numpy as np
 
 
 def run_backtest(spread_series, z_score_series, entry_threshold=2.0, exit_threshold=0.0):
     """
-    Vectorized Mean Reversion Backtest.
+    Vectorized Mean Reversion Backtest with complete trade statistics.
 
-    Logic:
-    - Short Spread when Z > threshold (Expect spread to go down)
-    - Long Spread when Z < -threshold (Expect spread to go up)
-    - Exit when Z crosses exit_threshold (mean reversion)
+    Returns:
+        dict with:
+            - equity_curve: pd.Series
+            - total_return: float
+            - sharpe_ratio: float
+            - num_trades: int
+            - win_rate: float
+            - avg_win: float
+            - avg_loss: float
+            - positions: pd.Series
+            - max_drawdown: float (min drawdown, negative)
     """
     df = pd.DataFrame({'spread': spread_series, 'z': z_score_series})
     df.dropna(inplace=True)
 
-    # Positions: 1 (Long), -1 (Short), 0 (Flat)
-    df['position'] = 0
-
-    # --- Entry Logic ---
-    # Long Entry
-    df.loc[df['z'] < -entry_threshold, 'position'] = 1
-    # Short Entry
-    df.loc[df['z'] > entry_threshold, 'position'] = -1
-
-    # --- Exit Logic (trickier in vectorization) ---
-    # We essentially want to forward-fill the position until the exit condition is met.
-    # Logic:
-    # If we are Long (1), we stay Long until Z >= exit_threshold.
-    # If we are Short (-1), we stay Short until Z <= -exit_threshold (assuming symmetric 0 exit).
-
-    # Create signals only on change
-    df['signal'] = 0
-    df.loc[df['z'] < -entry_threshold, 'signal'] = 1
-    df.loc[df['z'] > entry_threshold, 'signal'] = -1
-
-    # Mark exits (crossing 0)
-    # Using 0.1 buffer to ensure we actually crossed mean
-    df.loc[abs(df['z']) < 0.1, 'signal'] = 0
-
-    # This is a simplified "Continuous" backtest.
-    # For strict state-machine behavior (entry -> hold -> exit),
-    # loop is often safer, but let's try a hybrid approach.
+    if len(df) < 2:
+        empty_series = pd.Series(dtype=float)
+        return {
+            "equity_curve": empty_series,
+            "total_return": 0.0,
+            "sharpe_ratio": 0.0,
+            "num_trades": 0,
+            "win_rate": 0.0,
+            "avg_win": 0.0,
+            "avg_loss": 0.0,
+            "positions": pd.Series(dtype=int),
+            "max_drawdown": 0.0,
+            "trades": []
+        }
 
     positions = np.zeros(len(df))
     current_pos = 0
     z_vals = df['z'].values
+    trades = []           # list of per-trade PnL
+    entry_price = None
+    entry_index = None
 
-    # Optimized loop (Numba would be better, but standard python is fast enough for <10k rows)
     for i in range(len(df)):
         z = z_vals[i]
+        spread = df['spread'].iloc[i]
 
         if current_pos == 0:
+            # Entry conditions
             if z > entry_threshold:
                 current_pos = -1  # Short spread
+                entry_price = spread
+                entry_index = df.index[i]
             elif z < -entry_threshold:
-                current_pos = 1  # Long spread
+                current_pos = 1   # Long spread
+                entry_price = spread
+                entry_index = df.index[i]
+
         elif current_pos == 1:
+            # Long spread, exit when mean reverts
             if z >= exit_threshold:
-                current_pos = 0  # Exit Long
+                pnl = spread - entry_price
+                trades.append({
+                    "direction": "LONG",
+                    "entry_time": entry_index,
+                    "exit_time": df.index[i],
+                    "entry_spread": entry_price,
+                    "exit_spread": spread,
+                    "pnl": pnl
+                })
+                current_pos = 0
+                entry_price = None
+                entry_index = None
+
         elif current_pos == -1:
+            # Short spread, exit when mean reverts
             if z <= -exit_threshold:
-                current_pos = 0  # Exit Short
+                pnl = entry_price - spread
+                trades.append({
+                    "direction": "SHORT",
+                    "entry_time": entry_index,
+                    "exit_time": df.index[i],
+                    "entry_spread": entry_price,
+                    "exit_spread": spread,
+                    "pnl": pnl
+                })
+                current_pos = 0
+                entry_price = None
+                entry_index = None
 
         positions[i] = current_pos
 
     df['position'] = positions
-
-    # Calculate Returns
-    # Spread PnL = Position(t-1) * (Spread(t) - Spread(t-1))
     df['spread_chg'] = df['spread'].diff()
     df['pnl'] = df['position'].shift(1) * df['spread_chg']
-
-    # Cumulative PnL
+    df['pnl'].fillna(0.0, inplace=True)
     df['cumulative_pnl'] = df['pnl'].cumsum()
 
-    # Metrics
-    total_return = df['cumulative_pnl'].iloc[-1]
-    sharpe = (df['pnl'].mean() / df['pnl'].std()) * np.sqrt(252 * 1440) if df['pnl'].std() != 0 else 0
-    trades = df['position'].diff().abs().sum() / 2
+    # Equity metrics
+    equity_curve = df['cumulative_pnl']
+    total_return = float(equity_curve.iloc[-1]) if not equity_curve.empty else 0.0
+    pnl_std = df['pnl'].std()
+    sharpe = (df['pnl'].mean() / pnl_std) * np.sqrt(252 * 1440) if pnl_std and pnl_std != 0 else 0.0
+
+    # Max drawdown on equity curve
+    if equity_curve.empty:
+        max_drawdown = 0.0
+    else:
+        equity_shifted = equity_curve + (abs(equity_curve.min()) + 1.0)
+        roll_max = equity_shifted.cummax()
+        drawdown = (equity_shifted - roll_max) / roll_max
+        max_drawdown = float(drawdown.min())
+
+    # Trade statistics
+    num_trades = len(trades)
+    if num_trades > 0:
+        pnl_values = [t["pnl"] for t in trades]
+        winning_trades = [p for p in pnl_values if p > 0]
+        losing_trades = [p for p in pnl_values if p <= 0]
+
+        win_rate = len(winning_trades) / num_trades if num_trades > 0 else 0.0
+        avg_win = float(np.mean(winning_trades)) if winning_trades else 0.0
+        avg_loss = float(np.mean(losing_trades)) if losing_trades else 0.0
+    else:
+        win_rate = 0.0
+        avg_win = 0.0
+        avg_loss = 0.0
 
     return {
-        "equity_curve": df['cumulative_pnl'],
+        "equity_curve": equity_curve,
         "total_return": total_return,
         "sharpe_ratio": sharpe,
-        "num_trades": int(trades),
-        "positions": df['position']
+        "num_trades": num_trades,
+        "win_rate": win_rate,
+        "avg_win": avg_win,
+        "avg_loss": avg_loss,
+        "positions": df['position'],
+        "max_drawdown": max_drawdown,
+        "trades": trades
     }
