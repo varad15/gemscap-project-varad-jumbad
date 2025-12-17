@@ -2,6 +2,23 @@
 
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue) ![Streamlit](https://img.shields.io/badge/Frontend-Streamlit-red) ![Status](https://img.shields.io/badge/Status-Operational-brightgreen)
 
+<div style="background: linear-gradient(135deg, #00ff9d 0%, #00d4ff 100%); color: #000; padding: 20px; border-radius: 12px; border-left: 6px solid #00ff9d; margin: 20px 0; text-align: center;">
+
+**🎯 DUAL-MODE ARCHITECTURE**  
+*Live Trading + Cloud Demo*
+
+**🌐 LIVE TRADING (Local):**  
+`streamlit run app.py` + `index.html` = Real-time Binance + Alerts
+
+**☁️ CLOUD DEMO (CSV):**  
+[![Streamlit Demo](https://varad15-gemscap-project-varad-jumbad-app-283zjm.streamlit.app/)](https://varad15-gemscap-project-varad-jumbad-app-283zjm.streamlit.app/)  
+*Full analytics • Backtesting • Visualizations*
+
+**✅ Production + Presentation Ready**
+
+</div>
+
+
 ## Home Page
 ![Working image](main_page.png)
 
